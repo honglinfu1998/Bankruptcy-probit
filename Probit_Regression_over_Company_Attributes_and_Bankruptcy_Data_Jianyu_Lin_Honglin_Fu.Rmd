@@ -1,0 +1,252 @@
+---
+title: "Probit_Regression_over_Company_Attributes_and_Bankruptcy_Data_Jianyu_Lin_Honglin_Fu"
+author: "Jianyu Lin and Honglin Fu"
+date: '2021-11-30'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#Seperate training data and test data
+set.seed(1)
+data = read.csv("bankruptcy_data.csv")
+data = data[,-c(1)]
+train_ind = sample(c(1:5600),3000)
+train = data[train_ind,]
+test = data[-train_ind,]
+row.names(train) = NULL
+row.names(test) = NULL
+train
+test
+```
+
+```{r}
+x.test = test[,-c(65)]
+y.test = test$class
+x.te = as.matrix(x.test)
+```
+
+
+```{r}
+#Initialize
+N = dim(train)[1]
+x.train = train[,-c(65)]
+y.train = train$class
+x.tr = as.matrix(x.train)
+xtx = t(x.tr) %*% x.tr
+e = 10^(-10)
+xtx_inv = solve(xtx+e*diag(64))
+var_b = (N/(N+1))*xtx_inv
+E_b_coef = var_b %*% t(x.tr)
+```
+
+
+
+```{r}
+library(MASS)
+mvrnorm(2,c(1,2,3), diag(3))
+```
+
+
+
+
+```{r}
+#Gibbs Sampler
+library(truncnorm)
+set.seed(1)
+L = 5000
+# initial value
+Z = 1 + numeric(N)
+g = 1
+#beta = numeric(64)
+BETA = matrix(NA, nrow = 64, ncol = L)
+G = numeric(L)
+for (i in 1:L){
+  # update beta
+  E_beta = E_b_coef %*% Z
+  beta = mvrnorm(1, E_beta, var_b)
+  # update Z
+  for (n in 1:N){
+    ez = (t(beta) %*% x.tr[n,])[1,1]
+    
+    if (y.train[n] == 1){
+      Z[n] = rtruncnorm(1, a = g, b = Inf, mean = ez, sd = 1)
+    } else {
+      Z[n] = rtruncnorm(1, a = -Inf, b = g, mean = ez, sd = 1)
+    }
+  }
+  
+  # update g
+  a = min(Z[y.train == 1])
+  b = max(Z[y.train == 0])
+  g = runif(1, b, a)
+  G[i] = g
+  BETA[,i] = beta
+}
+g_final = mean(G)
+```
+
+```{r}
+hist(G)
+g_final
+```
+
+```{r}
+#95% interval
+b_low = numeric(64)
+b_upp = numeric(64)
+b_final = numeric(64)
+for (r in 1:64){
+  b_low[r] = quantile(BETA[r,],0.025)
+  b_upp[r] = quantile(BETA[r,],0.975)
+  b_final[r] = mean(BETA[r,])
+}
+```
+
+
+
+```{r}
+#Choose parameters which 95% interval doesn't contain 0
+choose = c(1:64)[b_low*b_upp>0]
+choose
+```
+
+```{r}
+y.pred = numeric(2600)
+for (j in 1:2600){
+  score = t(b_final) %*% x.te[j,]
+  if (score > g_final){y.pred[j] = 1}
+  else {y.pred[j] = 0}
+}
+sum(y.pred !=y.test)/2600
+sum(y.test)
+sum(y.pred*y.test)
+
+```
+
+```{r}
+# original 64 attributes all included
+b_final[choose]
+g_final
+hist(G)
+```
+
+
+
+```{r}
+#Improve model
+x.new = x.train[,choose]
+x.new
+```
+
+```{r}
+#Initialize
+N = dim(train)[1]
+
+x.new = x.train[,choose]
+x.ne = as.matrix(x.new)
+
+xtx.new = t(x.ne) %*% x.ne
+xtx_inv.new = solve(xtx.new)
+var_b.new = (N/(N+1))*xtx_inv.new
+E_b_coef.new = var_b.new %*% t(x.ne)
+```
+
+
+
+
+```{r}
+#Gibbs Sampler
+set.seed(1)
+L = 10000
+# initial value
+Z = 1 + numeric(N)
+g = 1
+BETA1 = matrix(NA, nrow = 18, ncol = L)
+G1 = numeric(L)
+for (i in 1:L){
+  # update beta
+  E_beta.new = E_b_coef.new %*% Z
+  beta = mvrnorm(1, E_beta.new, var_b.new)
+  
+  # update Z
+  for (n in 1:N){
+    ez = (t(beta) %*% x.ne[n,])[1,1]
+    
+    if (y.train[n] == 1){
+      Z[n] = rtruncnorm(1, a = g, b = Inf, mean = ez, sd = 1)
+    } else {
+      Z[n] = rtruncnorm(1, a = -Inf, b = g, mean = ez, sd = 1)
+    }
+  }
+  
+  # update g
+  a = min(Z[y.train == 1])
+  b = max(Z[y.train == 0])
+  g = runif(1, b, a)
+  G1[i] = g
+  BETA1[,i] = beta
+}
+```
+
+```{r}
+# histogram of g and mean of g (adjusted model)
+hist(G1)
+g_final1 = mean(G1)
+mean(G1)
+```
+
+```{r}
+#95% interval
+b_low1 = numeric(18)
+b_upp1 = numeric(18)
+b_final1 = numeric(18)
+for (r in 1:18){
+  b_low1[r] = quantile(BETA1[r,],0.025)
+  b_upp1[r] = quantile(BETA1[r,],0.975)
+  b_final1[r] = mean(BETA1[r,])
+}
+```
+
+```{r}
+#Choose parameters which 95% interval doesn't contain 0
+rbind(b_low1,b_upp1)
+newchoose = b_low1*b_upp1>0
+b_final_final = b_final1[newchoose]
+b_final_final
+```
+
+```{r}
+#Test
+x.test1 = x.test[,choose]
+y.pred1 = numeric(2600)
+for (j in 1:2600){
+  score = t(b_final1) %*% as.matrix(x.test1)[j,]
+  if (score > g_final1){y.pred1[j] = 1}
+  else {y.pred1[j] = 0}
+}
+
+x.test2 = x.test1[,newchoose]
+x.test2
+print((c(1:64)[choose])[newchoose])
+y.pred2 = numeric(2600)
+y.pred_special = numeric(2600)
+
+for (j in 1:2600){
+  score = t(b_final_final) %*% as.matrix(x.test2)[j,]
+  if (score > g_final1){y.pred2[j] = 1}
+  else {y.pred2[j] = 0}
+}
+sum(y.pred2 !=y.test)/2600
+```
+```{r}
+g_final1
+b_final_final
+```
+
+
+
